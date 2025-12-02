@@ -17,36 +17,53 @@ struct DendrogramNode {
     uint32_t size;
 };
 
-// Weighted graph structure for PARIS algorithm
+// Optimized weighted graph structure using vectors for better cache locality
 struct WeightedGraph {
+    // Map from node ID to adjacency list (neighbor -> weight)
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, double>> adjacency;
-    std::unordered_map<uint32_t, double> node_weights;
-    std::unordered_map<uint32_t, uint32_t> cluster_sizes;
-    double total_weight = 0.0;
 
-    // Add a node
-    void add_node(uint32_t node) {
-        if (adjacency.find(node) == adjacency.end()) {
-            adjacency[node] = std::unordered_map<uint32_t, double>();
-            node_weights[node] = 0.0;
-            cluster_sizes[node] = 1;
+    // Use vectors for dense node properties (better cache locality)
+    std::vector<double> node_weights;
+    std::vector<uint32_t> cluster_sizes;
+
+    // Active nodes set for quick existence checks
+    std::unordered_map<uint32_t, bool> active_nodes;
+
+    double total_weight = 0.0;
+    uint32_t max_node_id = 0;
+
+    void ensure_capacity(uint32_t node_id) {
+        if (node_id >= max_node_id) {
+            max_node_id = node_id + 1;
+            if (node_weights.size() <= node_id) {
+                node_weights.resize(node_id + 1024, 0.0);
+                cluster_sizes.resize(node_id + 1024, 0);
+            }
         }
     }
 
-    // Add an edge with weight
-    void add_edge(uint32_t u, uint32_t v, double weight = 1.0) {
+    void add_node(uint32_t node) {
+        ensure_capacity(node);
+        if (active_nodes.find(node) == active_nodes.end()) {
+            adjacency[node] = std::unordered_map<uint32_t, double>();
+            active_nodes[node] = true;
+            if (cluster_sizes[node] == 0) {
+                cluster_sizes[node] = 1;
+            }
+        }
+    }
+
+    void add_edge(uint32_t u, uint32_t v, double weight) {
         adjacency[u][v] = weight;
     }
 
-    // Check if edge exists
-    bool has_edge(uint32_t u, uint32_t v) const {
+    inline bool has_edge(uint32_t u, uint32_t v) const {
         auto it = adjacency.find(u);
         if (it == adjacency.end()) return false;
         return it->second.find(v) != it->second.end();
     }
 
-    // Get edge weight
-    double get_edge_weight(uint32_t u, uint32_t v) const {
+    inline double get_edge_weight(uint32_t u, uint32_t v) const {
         auto it = adjacency.find(u);
         if (it == adjacency.end()) return 0.0;
         auto it2 = it->second.find(v);
@@ -54,80 +71,81 @@ struct WeightedGraph {
         return it2->second;
     }
 
-    // Get neighbors of a node
-    std::vector<uint32_t> get_neighbors(uint32_t node) const {
-        std::vector<uint32_t> neighbors;
+    // Return const reference to avoid allocation
+    inline const std::unordered_map<uint32_t, double>& get_neighbors_map(uint32_t node) const {
+        static const std::unordered_map<uint32_t, double> empty;
         auto it = adjacency.find(node);
         if (it != adjacency.end()) {
-            for (const auto& [neighbor, weight] : it->second) {
-                neighbors.push_back(neighbor);
-            }
+            return it->second;
         }
-        return neighbors;
+        return empty;
     }
 
-    // Get all nodes
-    std::vector<uint32_t> get_nodes() const {
-        std::vector<uint32_t> nodes;
-        for (const auto& [node, _] : adjacency) {
+    void get_active_nodes(std::vector<uint32_t>& nodes) const {
+        nodes.clear();
+        nodes.reserve(active_nodes.size());
+        for (const auto& [node, _] : active_nodes) {
             nodes.push_back(node);
         }
-        return nodes;
     }
 
-    // Remove a node
     void remove_node(uint32_t node) {
-        adjacency.erase(node);
-        node_weights.erase(node);
-        cluster_sizes.erase(node);
-
-        // Remove edges to this node from other nodes
-        for (auto& [n, neighbors] : adjacency) {
-            neighbors.erase(node);
+        // Get neighbors before erasing
+        auto it = adjacency.find(node);
+        if (it != adjacency.end()) {
+            // Remove back-edges efficiently
+            for (const auto& [neighbor, _] : it->second) {
+                auto neighbor_it = adjacency.find(neighbor);
+                if (neighbor_it != adjacency.end()) {
+                    neighbor_it->second.erase(node);
+                }
+            }
+            adjacency.erase(it);
         }
+
+        active_nodes.erase(node);
+        // Keep vectors allocated but mark as inactive
+        node_weights[node] = 0.0;
     }
 
-    // Get number of nodes
-    size_t num_nodes() const {
-        return adjacency.size();
+    inline size_t num_nodes() const {
+        return active_nodes.size();
     }
 };
 
-// Convert unweighted Graph to WeightedGraph
+// Optimized single-pass conversion
 WeightedGraph convert_to_weighted_graph(const Graph& g) {
     WeightedGraph wg;
 
-    // Add all nodes
-    for (uint32_t u = 0; u < g.num_nodes; ++u) {
-        wg.add_node(u);
-    }
-
-    // Add all edges with default weight of 1.0
-    // Only add each edge once (undirected graph)
-    for (uint32_t u = 0; u < g.num_nodes; ++u) {
-        for (uint32_t idx = g.row_ptr[u]; idx < g.row_ptr[u + 1]; ++idx) {
-            uint32_t v = g.col_idx[idx];
-            if (u <= v) {  // Only add edge once for undirected graph
-                wg.add_edge(u, v, 1.0);
-                wg.add_edge(v, u, 1.0);
-            }
-        }
-    }
-
-    // Calculate node weights and total weight
+    // Pre-allocate vectors
+    wg.node_weights.resize(g.num_nodes, 0.0);
+    wg.cluster_sizes.resize(g.num_nodes, 1);
+    wg.max_node_id = g.num_nodes;
     wg.total_weight = 0.0;
+
+    // Reserve space for adjacency map
+    wg.adjacency.reserve(g.num_nodes);
+    wg.active_nodes.reserve(g.num_nodes);
+
+    // Single pass: add nodes, edges, and calculate weights
     for (uint32_t u = 0; u < g.num_nodes; ++u) {
-        double weight = 0.0;
+        wg.adjacency[u] = std::unordered_map<uint32_t, double>();
+        wg.active_nodes[u] = true;
+
+        uint32_t degree = g.row_ptr[u + 1] - g.row_ptr[u];
+        if (degree > 0) {
+            wg.adjacency[u].reserve(degree);
+        }
+
+        double node_weight = 0.0;
         for (uint32_t idx = g.row_ptr[u]; idx < g.row_ptr[u + 1]; ++idx) {
             uint32_t v = g.col_idx[idx];
-            double edge_weight = wg.get_edge_weight(u, v);
-            weight += edge_weight;
-            wg.total_weight += edge_weight;
-            if (u != v) {
-                wg.total_weight += edge_weight;
-            }
+            wg.adjacency[u][v] = 1.0;
+            node_weight += 1.0;
         }
-        wg.node_weights[u] = weight;
+
+        wg.node_weights[u] = node_weight;
+        wg.total_weight += node_weight;
     }
 
     return wg;
@@ -135,19 +153,22 @@ WeightedGraph convert_to_weighted_graph(const Graph& g) {
 
 // Reorder dendrogram
 std::vector<DendrogramNode> reorder_dendrogram(const std::vector<DendrogramNode>& D) {
+    if (D.empty()) return D;
+
     size_t n = D.size() + 1;
 
     // Create ordering based on distance
-    std::vector<std::pair<double, size_t>> order(n - 1);
+    std::vector<std::pair<double, size_t>> order;
+    order.reserve(n - 1);
     for (size_t i = 0; i < n - 1; ++i) {
-        order[i] = {D[i].distance, i};
+        order.emplace_back(D[i].distance, i);
     }
 
     // Sort by distance
     std::sort(order.begin(), order.end());
 
-    // Create index mapping
-    std::unordered_map<uint32_t, uint32_t> node_index;
+    // Create index mapping using vector for original nodes (faster than unordered_map)
+    std::vector<uint32_t> node_index(n + n - 1);
     for (uint32_t i = 0; i < n; ++i) {
         node_index[i] = i;
     }
@@ -158,21 +179,22 @@ std::vector<DendrogramNode> reorder_dendrogram(const std::vector<DendrogramNode>
     }
 
     // Reorder dendrogram
-    std::vector<DendrogramNode> reordered(n - 1);
+    std::vector<DendrogramNode> reordered;
+    reordered.reserve(n - 1);
     for (size_t t = 0; t < n - 1; ++t) {
         size_t orig_idx = order[t].second;
-        reordered[t] = {
+        reordered.push_back({
             node_index[D[orig_idx].cluster_a],
             node_index[D[orig_idx].cluster_b],
             D[orig_idx].distance,
             D[orig_idx].size
-        };
+        });
     }
 
     return reordered;
 }
 
-// PARIS algorithm
+// Optimized PARIS algorithm
 std::vector<DendrogramNode> paris(const Graph& g, bool verbose = false) {
     // Convert to weighted graph
     WeightedGraph F = convert_to_weighted_graph(g);
@@ -183,8 +205,9 @@ std::vector<DendrogramNode> paris(const Graph& g, bool verbose = false) {
         std::cout << "Total weight: " << F.total_weight << std::endl;
     }
 
-    // Dendrogram
+    // Pre-allocate dendrogram
     std::vector<DendrogramNode> dendrogram;
+    dendrogram.reserve(n - 1);
 
     // Connected components
     std::vector<std::pair<uint32_t, uint32_t>> connected_components;
@@ -192,33 +215,41 @@ std::vector<DendrogramNode> paris(const Graph& g, bool verbose = false) {
     // Cluster index
     uint32_t cluster_idx = n;
 
+    // Reusable vectors to avoid repeated allocations
+    std::vector<uint32_t> active_nodes;
+    std::vector<uint32_t> chain;
+    chain.reserve(1024);
+
     while (F.num_nodes() > 0) {
         // Start nearest-neighbor chain
-        std::vector<uint32_t> chain;
-        auto nodes = F.get_nodes();
-        if (nodes.empty()) break;
+        chain.clear();
+        F.get_active_nodes(active_nodes);
+        if (active_nodes.empty()) break;
 
-        chain.push_back(nodes[0]);
+        chain.push_back(active_nodes[0]);
 
         while (!chain.empty()) {
             uint32_t a = chain.back();
             chain.pop_back();
 
-            // Find nearest neighbor
+            // Find nearest neighbor - use const reference to avoid allocation
             double dmin = std::numeric_limits<double>::infinity();
             int32_t b = -1;
 
-            auto neighbors = F.get_neighbors(a);
-            for (uint32_t v : neighbors) {
+            const auto& neighbors = F.get_neighbors_map(a);
+            double node_weight_a = F.node_weights[a];
+            double inv_total_weight = 1.0 / F.total_weight;
+
+            for (const auto& [v, edge_weight] : neighbors) {
                 if (v != a) {
-                    double edge_weight = F.get_edge_weight(a, v);
-                    double d = F.node_weights[v] * F.node_weights[a] / edge_weight / F.total_weight;
+                    // Optimized distance calculation
+                    double d = F.node_weights[v] * node_weight_a / edge_weight * inv_total_weight;
 
                     if (d < dmin) {
                         b = v;
                         dmin = d;
-                    } else if (d == dmin) {
-                        b = std::min(b, static_cast<int32_t>(v));
+                    } else if (d == dmin && static_cast<int32_t>(v) < b) {
+                        b = v;
                     }
                 }
             }
@@ -243,24 +274,27 @@ std::vector<DendrogramNode> paris(const Graph& g, bool verbose = false) {
                     // Update graph - add new cluster node
                     F.add_node(cluster_idx);
 
-                    // Get neighbors before removing nodes
-                    auto neighbors_a = F.get_neighbors(a);
-                    auto neighbors_b = F.get_neighbors(b);
+                    // Copy neighbor lists before modification (references would be invalidated)
+                    auto neighbors_a_copy = F.adjacency[a];
+                    auto neighbors_b_copy = F.adjacency[b];
+
+                    // Reserve space for new adjacency list
+                    size_t total_neighbors = neighbors_a_copy.size() + neighbors_b_copy.size();
+                    F.adjacency[cluster_idx].reserve(total_neighbors);
 
                     // Add edges from new cluster to neighbors of a
-                    for (uint32_t v : neighbors_a) {
-                        double weight = F.get_edge_weight(a, v);
+                    for (const auto& [v, weight] : neighbors_a_copy) {
                         F.add_edge(cluster_idx, v, weight);
                         F.add_edge(v, cluster_idx, weight);
                     }
 
                     // Add edges from new cluster to neighbors of b
-                    for (uint32_t v : neighbors_b) {
-                        double weight_b = F.get_edge_weight(b, v);
+                    for (const auto& [v, weight_b] : neighbors_b_copy) {
                         if (F.has_edge(cluster_idx, v)) {
                             double existing_weight = F.get_edge_weight(cluster_idx, v);
-                            F.add_edge(cluster_idx, v, existing_weight + weight_b);
-                            F.add_edge(v, cluster_idx, existing_weight + weight_b);
+                            double new_weight = existing_weight + weight_b;
+                            F.add_edge(cluster_idx, v, new_weight);
+                            F.add_edge(v, cluster_idx, new_weight);
                         } else {
                             F.add_edge(cluster_idx, v, weight_b);
                             F.add_edge(v, cluster_idx, weight_b);
