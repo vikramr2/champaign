@@ -56,7 +56,7 @@ std::vector<DendrogramNode> champaign(const Graph& g, bool verbose = false) {
                 if (v != a) {
                     // CHAMPAIGN distance: d = (n_a * n_b) / (total_weight * p(a,b))
                     uint32_t size_v = F.cluster_sizes[v];
-                    double d = (size_a * size_v) / (F.total_weight * edge_weight);
+                    double d = (static_cast<double>(size_a) * size_v) / edge_weight;
 
                     if (d < dmin) {
                         b = v;

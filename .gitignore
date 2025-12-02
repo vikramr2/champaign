@@ -1,4 +1,5 @@
 build/
+eval/
 
 # Prerequisites
 *.d
