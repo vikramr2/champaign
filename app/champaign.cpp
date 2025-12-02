@@ -10,16 +10,21 @@
 #include "../lib/data_structures/graph.h"
 #include "../lib/io/graph_io.h"
 #include "../lib/algorithm/paris.h"
+#include "../lib/algorithm/champaign.h"
 
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " <input_file> [options]" << std::endl;
     std::cout << "\nDescription:" << std::endl;
-    std::cout << "  Run PARIS hierarchical clustering algorithm on a graph" << std::endl;
+    std::cout << "  Run hierarchical clustering algorithm on a graph" << std::endl;
     std::cout << "\nOptions:" << std::endl;
+    std::cout << "  -a <algorithm>    - Algorithm: champaign or paris (default: champaign)" << std::endl;
     std::cout << "  -o <output_file>  - Output file for results (default: print to stdout)" << std::endl;
     std::cout << "  -f <format>       - Output format: json or csv (default: json)" << std::endl;
     std::cout << "  -t <num_threads>  - Number of threads (default: hardware concurrency)" << std::endl;
     std::cout << "  -v                - Verbose output" << std::endl;
+    std::cout << "\nAlgorithms:" << std::endl;
+    std::cout << "  champaign  - Size-based distance metric: d = (n_a * n_b) / (total_weight * p(a,b))" << std::endl;
+    std::cout << "  paris      - Degree-based distance metric: d = p(i) * p(j) / p(i,j) / total_weight" << std::endl;
 }
 
 std::string escape_json_string(const std::string& s) {
@@ -123,7 +128,8 @@ void write_tree_as_json(std::ostream& out, const TreeNode& node, int indent = 0)
 void save_dendrogram_json(const std::vector<DendrogramNode>& dendrogram,
                           uint32_t num_nodes,
                           uint32_t num_edges,
-                          const std::string& output_file) {
+                          const std::string& output_file,
+                          const std::string& algorithm = "Champaign") {
     // Build the tree from the dendrogram
     // The root is the last merge
     uint32_t root_id = num_nodes + dendrogram.size() - 1;
@@ -135,7 +141,7 @@ void save_dendrogram_json(const std::vector<DendrogramNode>& dendrogram,
     }
 
     out << "{\n";
-    out << "  \"algorithm\": \"Paris\",\n";
+    out << "  \"algorithm\": \"" << algorithm << "\",\n";
     out << "  \"num_nodes\": " << num_nodes << ",\n";
     out << "  \"num_edges\": " << num_edges << ",\n";
     out << "  \"hierarchy\": ";
@@ -170,13 +176,20 @@ int main(int argc, char* argv[]) {
     std::string input_file = argv[1];
     std::string output_file = "";
     std::string format = "json";
+    std::string algorithm = "champaign";
     int num_threads = std::thread::hardware_concurrency();
     bool verbose = false;
 
     // Parse optional arguments
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "-o" && i + 1 < argc) {
+        if (arg == "-a" && i + 1 < argc) {
+            algorithm = argv[++i];
+            if (algorithm != "champaign" && algorithm != "paris") {
+                std::cerr << "Error: algorithm must be 'champaign' or 'paris'" << std::endl;
+                return 1;
+            }
+        } else if (arg == "-o" && i + 1 < argc) {
             output_file = argv[++i];
         } else if (arg == "-f" && i + 1 < argc) {
             format = argv[++i];
@@ -195,7 +208,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::cout << "Running PARIS algorithm on: " << input_file << std::endl;
+    std::cout << "Running " << algorithm << " algorithm on: " << input_file << std::endl;
 
     try {
         // Load graph
@@ -207,19 +220,27 @@ int main(int argc, char* argv[]) {
         std::cout << "Graph loaded in " << duration.count() << " ms" << std::endl;
         std::cout << "Nodes: " << graph.num_nodes << ", Edges: " << graph.num_edges << std::endl;
 
-        // Run PARIS algorithm
+        // Run selected algorithm
         start = std::chrono::high_resolution_clock::now();
-        std::vector<DendrogramNode> dendrogram = paris(graph, verbose);
+        std::vector<DendrogramNode> dendrogram;
+        if (algorithm == "champaign") {
+            dendrogram = champaign(graph, verbose);
+        } else {
+            dendrogram = paris(graph, verbose);
+        }
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        std::cout << "PARIS completed in " << duration.count() << " ms" << std::endl;
+        std::cout << algorithm << " completed in " << duration.count() << " ms" << std::endl;
         std::cout << "Dendrogram size: " << dendrogram.size() << std::endl;
 
         // Save dendrogram if output file specified
         if (!output_file.empty()) {
             if (format == "json") {
-                save_dendrogram_json(dendrogram, graph.num_nodes, graph.num_edges, output_file);
+                // Capitalize algorithm name for JSON
+                std::string algo_name = algorithm;
+                algo_name[0] = std::toupper(algo_name[0]);
+                save_dendrogram_json(dendrogram, graph.num_nodes, graph.num_edges, output_file, algo_name);
                 std::cout << "Dendrogram saved to: " << output_file << " (JSON format)" << std::endl;
             } else {
                 save_dendrogram_csv(dendrogram, output_file);

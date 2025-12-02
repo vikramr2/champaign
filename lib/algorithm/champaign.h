@@ -1,5 +1,5 @@
-#ifndef PARIS_H
-#define PARIS_H
+#ifndef CHAMPAIGN_H
+#define CHAMPAIGN_H
 
 #include <vector>
 #include <limits>
@@ -7,14 +7,14 @@
 #include "../data_structures/hierarchical_clustering.h"
 #include "../data_structures/graph.h"
 
-// PARIS algorithm - uses node degree weights in distance metric
-std::vector<DendrogramNode> paris(const Graph& g, bool verbose = false) {
+// CHAMPAIGN algorithm - uses cluster sizes in distance metric
+std::vector<DendrogramNode> champaign(const Graph& g, bool verbose = false) {
     // Convert to weighted graph
     WeightedGraph F = convert_to_weighted_graph(g);
     uint32_t n = F.num_nodes();
 
     if (verbose) {
-        std::cout << "Running PARIS algorithm on graph with " << n << " nodes" << std::endl;
+        std::cout << "Running CHAMPAIGN algorithm on graph with " << n << " nodes" << std::endl;
         std::cout << "Total weight: " << F.total_weight << std::endl;
     }
 
@@ -45,18 +45,18 @@ std::vector<DendrogramNode> paris(const Graph& g, bool verbose = false) {
             uint32_t a = chain.back();
             chain.pop_back();
 
-            // Find nearest neighbor - PARIS distance metric
+            // Find nearest neighbor - CHAMPAIGN distance metric
             double dmin = std::numeric_limits<double>::infinity();
             int32_t b = -1;
 
             const auto& neighbors = F.get_neighbors_map(a);
-            double node_weight_a = F.node_weights[a];
-            double inv_total_weight = 1.0 / F.total_weight;
+            uint32_t size_a = F.cluster_sizes[a];
 
             for (const auto& [v, edge_weight] : neighbors) {
                 if (v != a) {
-                    // PARIS distance: d = p(i) * p(j) / p(i,j) / total_weight
-                    double d = F.node_weights[v] * node_weight_a / edge_weight * inv_total_weight;
+                    // CHAMPAIGN distance: d = (n_a * n_b) / (total_weight * p(a,b))
+                    uint32_t size_v = F.cluster_sizes[v];
+                    double d = (size_a * size_v) / (F.total_weight * edge_weight);
 
                     if (d < dmin) {
                         b = v;
@@ -162,4 +162,4 @@ std::vector<DendrogramNode> paris(const Graph& g, bool verbose = false) {
     return reorder_dendrogram(dendrogram);
 }
 
-#endif // PARIS_H
+#endif // CHAMPAIGN_H
