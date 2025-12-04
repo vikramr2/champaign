@@ -1,6 +1,10 @@
 build/
 eval/
 
+*.json
+*.tsv
+*.csv
+
 *.egg-info/
 dist/
 *.egg

@@ -29,7 +29,8 @@ class CMakeBuild(build_ext):
 
         cmake_args = ['-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=' + extdir,
                      '-DPYTHON_EXECUTABLE=' + sys.executable,
-                     '-Dpybind11_DIR=' + pybind11_cmake_dir]
+                     '-Dpybind11_DIR=' + pybind11_cmake_dir,
+                     '-DBUILD_PYTHON_MODULE=ON']  # Enable Python module build
 
         cfg = 'Debug' if self.debug else 'Release'
         build_args = ['--config', cfg]
@@ -53,7 +54,7 @@ setup(
     author='Your Name',
     description='Champaign and Paris hierarchical clustering algorithms',
     long_description='Fast C++ implementation of Champaign (CPM) and Paris (Modularity) clustering',
-    ext_modules=[CMakeExtension('champaign', sourcedir='python_module')],
+    ext_modules=[CMakeExtension('champaign', sourcedir='.')],  # Now points to root directory
     cmdclass=dict(build_ext=CMakeBuild),
     zip_safe=False,
     python_requires='>=3.7',
