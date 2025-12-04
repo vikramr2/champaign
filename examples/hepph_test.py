@@ -12,3 +12,6 @@ if __name__ == "__main__":
 
     print("Champaign Result:", champaign_result)
     print("Leiden Clusters:", leiden_clusters)
+
+    # Save the dendrogram to a json file
+    champaign_result.save_json("champaign_hepph_result.json")

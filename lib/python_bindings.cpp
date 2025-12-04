@@ -186,6 +186,108 @@ public:
 
         return result;
     }
+
+    // Save dendrogram as JSON file
+    void save_json(const std::string& filename,
+                   const std::string& algorithm = "Champaign",
+                   uint32_t num_edges = 0) const {
+        // Build tree from dendrogram
+        uint32_t root_id = n_nodes + nodes.size() - 1;
+        TreeNode root = build_tree_recursive(root_id);
+
+        // Write to file
+        std::ofstream out(filename);
+        if (!out.is_open()) {
+            throw std::runtime_error("Could not open output file: " + filename);
+        }
+
+        out << "{\n";
+        out << "  \"algorithm\": \"" << algorithm << "\",\n";
+        out << "  \"num_nodes\": " << n_nodes << ",\n";
+        out << "  \"num_edges\": " << num_edges << ",\n";
+        out << "  \"hierarchy\": ";
+
+        write_tree_as_json(out, root, 1);
+
+        out << "\n}\n";
+        out.close();
+    }
+
+private:
+    // Tree node structure for JSON output
+    struct TreeNode {
+        uint32_t id;
+        std::string type;
+        double distance;
+        uint32_t count;
+        std::vector<TreeNode> children;
+    };
+
+    // Build tree recursively from dendrogram
+    TreeNode build_tree_recursive(uint32_t node_id) const {
+        TreeNode node;
+        node.id = node_id;
+
+        if (node_id < n_nodes) {
+            // Leaf node
+            node.type = "leaf";
+            node.count = 1;
+            node.distance = 0.0;
+        } else {
+            // Internal node - find the merge that created this cluster
+            uint32_t merge_index = node_id - n_nodes;
+            if (merge_index < nodes.size()) {
+                const auto& merge = nodes[merge_index];
+                node.type = "cluster";
+                node.distance = merge.distance;
+                node.count = merge.size;
+
+                // Recursively build children
+                node.children.push_back(build_tree_recursive(merge.cluster_a));
+                node.children.push_back(build_tree_recursive(merge.cluster_b));
+            }
+        }
+
+        return node;
+    }
+
+    // Write tree as JSON
+    void write_tree_as_json(std::ostream& out, const TreeNode& node, int indent) const {
+        std::string indent_str(indent * 2, ' ');
+        std::string next_indent_str((indent + 1) * 2, ' ');
+
+        out << indent_str << "{\n";
+        out << next_indent_str << "\"id\": " << node.id << ",\n";
+        out << next_indent_str << "\"type\": \"" << node.type << "\"";
+
+        if (node.type == "leaf") {
+            out << ",\n" << next_indent_str << "\"name\": \"" << node.id << "\",\n";
+            out << next_indent_str << "\"count\": " << node.count << "\n";
+        } else {
+            out << ",\n" << next_indent_str << "\"distance\": ";
+            if (std::isinf(node.distance)) {
+                out << "null";
+            } else {
+                out << node.distance;
+            }
+            out << ",\n";
+            out << next_indent_str << "\"count\": " << node.count << ",\n";
+            out << next_indent_str << "\"children\": [\n";
+
+            for (size_t i = 0; i < node.children.size(); ++i) {
+                write_tree_as_json(out, node.children[i], indent + 2);
+                if (i < node.children.size() - 1) {
+                    out << ",\n";
+                } else {
+                    out << "\n";
+                }
+            }
+
+            out << next_indent_str << "]\n";
+        }
+
+        out << indent_str << "}";
+    }
 };
 
 // Load graph from TSV
@@ -245,6 +347,11 @@ PYBIND11_MODULE(champaign, m) {
              py::arg("max_iterations") = 10,
              py::arg("random_seed") = 42,
              py::arg("verbose") = false)
+        .def("save_json", &DendrogramWrapper::save_json,
+             "Save dendrogram to JSON file",
+             py::arg("filename"),
+             py::arg("algorithm") = "Champaign",
+             py::arg("num_edges") = 0)
         .def("__len__", &DendrogramWrapper::size)
         .def("__repr__", [](const DendrogramWrapper& d) {
             return "Dendrogram(merges=" + std::to_string(d.size()) +
