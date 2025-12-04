@@ -190,6 +190,114 @@ Partition extract_partition_from_dendrogram(
     return partition;
 }
 
+// Find connected components within a subset of nodes using BFS
+std::vector<std::unordered_set<uint32_t>> find_connected_components(
+    const Graph& g,
+    const std::unordered_set<uint32_t>& nodes
+) {
+    std::vector<std::unordered_set<uint32_t>> components;
+    std::unordered_set<uint32_t> visited;
+
+    for (uint32_t start_node : nodes) {
+        if (visited.count(start_node)) continue;
+
+        // BFS to find connected component
+        std::unordered_set<uint32_t> component;
+        std::vector<uint32_t> queue;
+        queue.push_back(start_node);
+        visited.insert(start_node);
+        component.insert(start_node);
+
+        size_t queue_idx = 0;
+        while (queue_idx < queue.size()) {
+            uint32_t current = queue[queue_idx++];
+
+            // Check all neighbors
+            for (uint32_t neighbor : g.get_neighbors(current)) {
+                // Only consider neighbors within the node subset
+                if (nodes.count(neighbor) && !visited.count(neighbor)) {
+                    visited.insert(neighbor);
+                    component.insert(neighbor);
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+
+        components.push_back(component);
+    }
+
+    return components;
+}
+
+// Refinement phase: splits disconnected communities into separate components
+void refine_partition(
+    const Graph& g,
+    Partition& partition,
+    bool verbose = false
+) {
+    uint32_t communities_split = 0;
+    uint32_t next_comm_id = 0;
+
+    // Find next available community ID
+    for (const auto& [comm_id, members] : partition.community_members) {
+        if (comm_id >= next_comm_id) {
+            next_comm_id = comm_id + 1;
+        }
+    }
+
+    // Make a copy of community IDs to iterate over (since we'll modify the map)
+    std::vector<uint32_t> comm_ids;
+    for (const auto& [comm_id, members] : partition.community_members) {
+        comm_ids.push_back(comm_id);
+    }
+
+    for (uint32_t comm_id : comm_ids) {
+        // Check if community still exists (might have been split already)
+        if (partition.community_members.find(comm_id) == partition.community_members.end()) {
+            continue;
+        }
+
+        const auto& members = partition.community_members[comm_id];
+
+        // Skip singleton communities
+        if (members.size() <= 1) continue;
+
+        // Find connected components within this community
+        auto components = find_connected_components(g, members);
+
+        // If more than one component, split the community
+        if (components.size() > 1) {
+            communities_split++;
+
+            // Keep the first component in the original community
+            // Move other components to new communities
+            bool first = true;
+            for (const auto& component : components) {
+                if (first) {
+                    first = false;
+                    // Update the original community to only contain this component
+                    partition.community_members[comm_id] = component;
+                    for (uint32_t node : component) {
+                        partition.node_to_community[node] = comm_id;
+                    }
+                } else {
+                    // Create new community for this component
+                    uint32_t new_comm_id = next_comm_id++;
+                    for (uint32_t node : component) {
+                        partition.node_to_community[node] = new_comm_id;
+                        partition.community_members[new_comm_id].insert(node);
+                    }
+                }
+            }
+        }
+    }
+
+    if (verbose && communities_split > 0) {
+        std::cout << "  Refinement: split " << communities_split
+                  << " disconnected communities" << std::endl;
+    }
+}
+
 // Leiden refinement from dendrogram
 Partition leiden_from_dendrogram(
     const Graph& g,
@@ -219,13 +327,16 @@ Partition leiden_from_dendrogram(
     // Random number generator
     std::mt19937 rng(random_seed);
 
-    // Iterate local moves
+    // Iterate local moves with refinement
     for (uint32_t iter = 0; iter < max_iterations; iter++) {
         if (verbose) {
             std::cout << "Iteration " << (iter + 1) << "/" << max_iterations << std::endl;
         }
 
         bool improved = local_move_optimization(g, partition, gamma, rng, verbose);
+
+        // Refinement phase: split disconnected communities
+        refine_partition(g, partition, verbose);
 
         if (!improved) {
             if (verbose) {

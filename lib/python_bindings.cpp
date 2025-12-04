@@ -42,6 +42,32 @@ public:
         }
         return result;
     }
+
+    // Get original node ID from internal ID
+    uint64_t get_original_id(uint32_t internal_id) const {
+        if (internal_id >= g.id_map.size()) {
+            throw std::out_of_range("Internal ID out of range");
+        }
+        return g.id_map[internal_id];
+    }
+
+    // Get internal ID from original node ID
+    uint32_t get_internal_id(uint64_t original_id) const {
+        auto it = g.node_map.find(original_id);
+        if (it == g.node_map.end()) {
+            throw std::out_of_range("Original ID not found in graph");
+        }
+        return it->second;
+    }
+
+    // Get all original node IDs
+    py::list get_original_ids() const {
+        py::list result;
+        for (uint64_t original_id : g.id_map) {
+            result.append(original_id);
+        }
+        return result;
+    }
 };
 
 // Python-friendly dendrogram wrapper
@@ -92,12 +118,14 @@ public:
             graph_wrapper.g, nodes, gamma, max_iterations, random_seed, verbose
         );
 
-        // Convert partition to Python format
+        // Convert partition to Python format with ORIGINAL node IDs
         py::list clusters;
         for (const auto& [comm_id, members] : partition.community_members) {
             py::list cluster;
-            for (uint32_t node : members) {
-                cluster.append(node);
+            for (uint32_t internal_node_id : members) {
+                // Map back to original ID
+                uint64_t original_id = graph_wrapper.g.id_map[internal_node_id];
+                cluster.append(original_id);
             }
             clusters.append(cluster);
         }
@@ -325,6 +353,11 @@ PYBIND11_MODULE(champaign, m) {
         .def("num_edges", &GraphWrapper::num_edges, "Get number of edges")
         .def("neighbors", &GraphWrapper::neighbors, "Get neighbors of a node",
              py::arg("node"))
+        .def("get_original_id", &GraphWrapper::get_original_id, "Get original node ID from internal ID",
+             py::arg("internal_id"))
+        .def("get_internal_id", &GraphWrapper::get_internal_id, "Get internal ID from original node ID",
+             py::arg("original_id"))
+        .def("get_original_ids", &GraphWrapper::get_original_ids, "Get list of all original node IDs")
         .def("__repr__", [](const GraphWrapper& g) {
             return "Graph(nodes=" + std::to_string(g.num_nodes()) +
                    ", edges=" + std::to_string(g.num_edges()) + ")";
