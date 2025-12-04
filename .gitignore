@@ -1,6 +1,17 @@
 build/
 eval/
 
+*.egg-info/
+dist/
+*.egg
+.eggs/
+pip-wheel-metadata/
+__pypackages__/
+*.manifest
+*.spec
+
+__pycache__/
+
 # Prerequisites
 *.d
 
