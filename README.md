@@ -39,9 +39,9 @@ result = dendro.louvain(g, resolution=0.5) # Generate Louvain slice for 0.5 res 
 
 ### Hierarchical Clustering
 
-**Champaign**: Builds dendrograms using CPM (Constant Potts Model) with cluster size weighting. Optimized for detecting communities with strong internal connectivity.
+**Champaign**: Builds hierarchical clustering dendrogram using CPM (Constant Potts Model). Optimized for detecting communities with strong internal connectivity.
 
-**Paris**: Builds dendrograms using node degree-based distance metric. Optimized for modularity-based community structure.
+**Paris**: Builds hierarchical clustering dendrogram optimized for modularity-based community structure.
 
 ### Slicing
 
