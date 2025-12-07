@@ -12,6 +12,7 @@
 #include "algorithm/champaign.h"
 #include "algorithm/paris.h"
 #include "algorithm/leiden.h"
+#include "algorithm/louvain.h"
 #include "io/graph_io.h"
 
 namespace py = pybind11;
@@ -138,6 +139,39 @@ public:
         result["cpm"] = cpm;
         result["num_clusters"] = partition.num_communities();
         result["gamma"] = gamma;
+
+        return result;
+    }
+
+    // Louvain refinement (for Paris dendrograms using modularity)
+    py::dict louvain(const GraphWrapper& graph_wrapper, double resolution,
+                    uint32_t max_iterations = 10,
+                    uint32_t random_seed = 42,
+                    bool verbose = false) const {
+        Partition partition = louvain_from_dendrogram(
+            graph_wrapper.g, nodes, resolution, max_iterations, random_seed, verbose
+        );
+
+        // Convert partition to Python format with ORIGINAL node IDs
+        py::list clusters;
+        for (const auto& [comm_id, members] : partition.community_members) {
+            py::list cluster;
+            for (uint32_t internal_node_id : members) {
+                // Map back to original ID
+                uint64_t original_id = graph_wrapper.g.id_map[internal_node_id];
+                cluster.append(original_id);
+            }
+            clusters.append(cluster);
+        }
+
+        // Calculate modularity
+        double modularity = calculate_partition_modularity(graph_wrapper.g, partition, resolution);
+
+        py::dict result;
+        result["clusters"] = clusters;
+        result["modularity"] = modularity;
+        result["num_clusters"] = partition.num_communities();
+        result["resolution"] = resolution;
 
         return result;
     }
@@ -377,6 +411,12 @@ PYBIND11_MODULE(champaign, m) {
         .def("leiden", &DendrogramWrapper::leiden,
              "Apply Leiden refinement at resolution gamma",
              py::arg("graph"), py::arg("gamma"),
+             py::arg("max_iterations") = 10,
+             py::arg("random_seed") = 42,
+             py::arg("verbose") = false)
+        .def("louvain", &DendrogramWrapper::louvain,
+             "Apply Louvain refinement at resolution parameter (for Paris dendrograms)",
+             py::arg("graph"), py::arg("resolution"),
              py::arg("max_iterations") = 10,
              py::arg("random_seed") = 42,
              py::arg("verbose") = false)
