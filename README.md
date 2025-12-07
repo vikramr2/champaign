@@ -26,13 +26,13 @@ import champaign
 # Load graph from TSV edge list
 g = champaign.from_tsv("graph.tsv")
 
-# Method 1: Champaign + Leiden (CPM optimization)
+# Method 1: Champaign
 dendro = champaign.champaign(g)
-result = dendro.leiden(g, gamma=0.5)
+result = dendro.leiden(g, gamma=0.5) # Generate Leiden slice for 0.5 res snapshot
 
 # Method 2: Paris + Louvain (modularity optimization)
 dendro = champaign.paris(g)
-result = dendro.louvain(g, resolution=0.5)
+result = dendro.louvain(g, resolution=0.5) # Generate Louvain slice for 0.5 res snapshot
 ```
 
 ## Features
