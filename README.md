@@ -1,7 +1,7 @@
 # Champaign
 Paris + CPM = Champaign (clearly)
 
-Fast hierarchical clustering algorithms with quality-driven tree slicing.
+Fast hierarchical clustering algorithms with tree slicing for rapid multi-resoluton snapshots.
 
 ## Introduction
 
